@@ -1,0 +1,163 @@
+import numpy as np
+import os
+import time
+import matplotlib.pyplot as plt
+from skimage import io, color
+from scipy.spatial import ConvexHull
+from matplotlib.path import Path
+from skimage import measure
+from skimage.filters import gaussian
+from skimage.filters import threshold_otsu
+from skimage import img_as_ubyte
+from skimage import filters, morphology, color, feature
+from scipy import ndimage
+
+def pre_processing(image):
+    if image.shape[2] == 4:
+        image = image[:, :, :3]
+    grey_image = color.rgb2gray(image)
+    filtered_image = filters.median(grey_image)
+    edges = filters.sobel(filtered_image)
+    binary_image = edges > 0.1
+
+    #cleaning image
+    binary_image = morphology.binary_closing(binary_image, morphology.disk(3))
+    #label connnected components
+    labeled_image = measure.label(binary_image)
+    if np.max(labeled_image) == 0:
+        print("No labelled regions found in the image.")
+        return
+
+    #find largest object
+    largest_object = max(measure.regionprops(labeled_image), key=lambda prop: prop.area)
+    mask = labeled_image == largest_object.label
+    #converting back to rgb
+    largest_object_rgb = np.zeros_like(image)
+    largest_object_rgb[:, :, 0] = image[:, :, 0] * mask
+    largest_object_rgb[:, :, 1] = image[:, :, 1] * mask
+    largest_object_rgb[:, :, 2] = image[:, :, 2] * mask
+
+    fig, axes = plt.subplots(2, 2, figsize=(10, 10))
+    axes[0, 0].imshow(image)
+    axes[0, 0].set_title('Original Image')
+    axes[0, 0].axis('off')
+
+    axes[0, 1].imshow(edges, cmap='gray')
+    axes[0, 1].set_title('Edges')
+    axes[0, 1].axis('off')
+
+    axes[1, 0].imshow(binary_image, cmap='gray')
+    axes[1, 0].set_title('Binary Image')
+    axes[1, 0].axis('off')
+
+    if largest_object_rgb is not None:
+        axes[1, 1].imshow(largest_object_rgb)
+        axes[1, 1].set_title('Largest Object (RGB)')
+        axes[1, 1].axis('off')
+        plt.show()
+
+        map_colours_to_triangle(largest_object_rgb)
+    else:
+        print("Failed to create largest object RGB image.")
+
+def map_colours_to_triangle(largest_object_rgb):
+    normalised_img = largest_object_rgb/ 255.0
+    u_values = (normalised_img[:,:,0] - normalised_img[:,:,1]) / (np.sqrt(2) * (normalised_img[:,:,0] + normalised_img[:,:,1] + normalised_img[:,:,2]))
+    v_values = (2*(normalised_img[:,:,2]) - normalised_img[:,:,0] - normalised_img[:,:,1])/(np.sqrt(6) * ((normalised_img[:,:,0] + normalised_img[:,:,1] + normalised_img[:,:,2])))
+
+    fig, ax = plt.subplots()
+    ax.scatter(u_values.flatten(), v_values.flatten(), c=normalised_img.reshape((-1, 3)), cmap='viridis')
+    ax.set_title('Colour Mapping Maxwell Triangle')
+    plt.show()
+
+    red_points = np.array([[0.1, -0.05], [0.395, -0.05], [0.3, -0.3]])
+    blue_points = np.array([[0.01, 0.05], [-0.1, 0.3], [0.15, 0.3]])
+    green_points = np.array([[-0.05, -0.05], [-0.3, -0.05], [-0.3, -0.3]])
+    orange_points = np.array([[0.04, -0.15], [0.15, -0.02], [0.3, -0.4]])
+    yellow_points = np.array([[0.04, -0.14], [-0.03, -0.4], [0.2, -0.4]])
+
+
+    #adjust colours and change convex hulls 
+
+    points = np.column_stack((u_values.flatten(), v_values.flatten()))
+
+    red_hull = ConvexHull(red_points, qhull_options='QJ')
+    blue_hull = ConvexHull(blue_points, qhull_options='QJ')
+    green_hull = ConvexHull(green_points, qhull_options='QJ')
+    orange_hull = ConvexHull(orange_points, qhull_options='QJ')
+    yellow_hull = ConvexHull(yellow_points, qhull_options='QJ')
+
+    try:
+        plt.plot(red_points[:, 0], red_points[:, 1], 'o', color='red')
+        for simplex in red_hull.simplices:
+            plt.plot(red_points[simplex, 0], red_points[simplex, 1], 'k-')
+        #plt.show()
+        path = Path(red_points[red_hull.vertices])
+        red_count = np.sum(path.contains_points(points))
+
+        plt.plot(blue_points[:, 0], blue_points[:, 1], 'o', color='blue')
+        for simplex in blue_hull.simplices:
+            plt.plot(blue_points[simplex, 0], blue_points[simplex, 1], 'k-')
+        #plt.show()
+        path = Path(blue_points[blue_hull.vertices])
+        blue_count = np.sum(path.contains_points(points))
+
+        plt.plot(green_points[:, 0], green_points[:, 1], 'o', color='green')
+        for simplex in green_hull.simplices:
+            plt.plot(green_points[simplex, 0], green_points[simplex, 1], 'k-')
+        #plt.show()
+        path = Path(green_points[green_hull.vertices])
+        green_count = np.sum(path.contains_points(points))
+
+        plt.plot(yellow_points[:, 0], yellow_points[:, 1], 'o', color='yellow')
+        for simplex in yellow_hull.simplices:
+            plt.plot(yellow_points[simplex, 0], yellow_points[simplex, 1], 'k-')
+        #plt.show()
+        path = Path(yellow_points[yellow_hull.vertices])
+        yellow_count = np.sum(path.contains_points(points))
+
+        #plots orange points
+        plt.plot(orange_points[:, 0], orange_points[:, 1], 'o', color='orange')
+        #iterate over orange points in convex hull and plot
+        for simplex in orange_hull.simplices:
+            plt.plot(orange_points[simplex, 0], orange_points[simplex, 1], 'k-')
+        #plt.show()
+        #create object from vertices
+        path = Path(orange_points[orange_hull.vertices])
+        #calculate number of points that fall within hull of orange points if any 
+        orange_count = np.sum(path.contains_points(points))
+
+        print(f'Total red points: {red_count}')
+        print(f'Total blue points: {blue_count}')
+        print(f'Total green points: {green_count}')
+        print(f'Total yellow points: {yellow_count}')
+        print(f'Total orange points: {orange_count}')
+
+        colour_counts = {
+        'red': red_count,
+        'blue': blue_count,
+        'green': green_count,
+        'orange': orange_count,
+        'yellow': yellow_count
+        }
+
+        max_colour = max(colour_counts, key=colour_counts.get)
+
+        if colour_counts[max_colour] > 1:
+            print(f'The road sign is {max_colour}')
+        else:
+            print('The road sign has an equal number of two or more colors')
+    except Exception as e:
+        print(f"Convex Hull Error: {e}")
+
+
+
+#folder_path = r"C:\Users\sheha\Desktop\FYP\images"
+#for filename in os.listdir(folder_path):
+    if filename.endswith(".jpg") or filename.endswith(".png"):
+        image_path = os.path.join(folder_path, filename)
+        image = io.imread(image_path)
+        pre_processing(image)
+        time.sleep(2)
+
+pre_processing(img)
